@@ -1,54 +1,48 @@
-import os
+import logging
+import re
 import requests
 from flask import Flask, request
-from telegram import Bot, Update
-from telegram.ext import Dispatcher, MessageHandler, Filters, CallbackContext
-from bs4 import BeautifulSoup
+from telegram import Update, Bot
+from telegram.ext import Dispatcher, MessageHandler, filters, CallbackContext
+import os
+
+TOKEN = os.environ.get("TELEGRAM_TOKEN", "твой_токен_сюда")
+bot = Bot(token=TOKEN)
 
 app = Flask(__name__)
+dispatcher = Dispatcher(bot=bot, update_queue=None, workers=0, use_context=True)
 
-TOKEN = os.getenv("TOKEN")
-bot = Bot(token=TOKEN)
-dispatcher = Dispatcher(bot, None, use_context=True)
+logging.basicConfig(level=logging.INFO)
+
+def normalize_query(text):
+    return re.sub(r"[^A-Za-z0-9\-]", "", text.strip())
 
 def search_ebay_prices(query):
-    url = f"https://www.ebay.com/sch/i.html?_nkw={query}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        url = f"https://www.ebay.com/sch/i.html?_nkw={query}&_sop=12"
+        response = requests.get(url, headers=headers, timeout=10)
+        html = response.text
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    prices = []
+        prices = [float(p.replace(",", "").replace("$", "")) for p in re.findall(r"\$\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?", html)]
+        prices = [p for p in prices if p > 0]
 
-    for item in soup.select(".s-item"):
-        price_span = item.select_one(".s-item__price")
-        if price_span:
-            price_text = price_span.text.replace("$", "").replace(",", "").strip()
-            try:
-                price = float(price_text.split()[0])
-                prices.append(price)
-            except:
-                continue
+        if not prices:
+            return "Цены на eBay не найдены."
 
-    if not prices:
-        return "Цены на eBay не найдены."
-
-    min_price = min(prices)
-    avg_price = round(sum(prices) / len(prices), 2)
-    last_price = prices[0]
-
-    return (
-        f"По eBay:\n"
-        f"- Минимальная цена: ${min_price}\n"
-        f"- Средняя цена: ${avg_price}\n"
-        f"- Последняя цена: ${last_price}"
-    )
+        return (
+            f"По eBay:\n"
+            f"- Минимальная цена: ${min(prices)}\n"
+            f"- Средняя цена: ${round(sum(prices)/len(prices), 2)}\n"
+            f"- Последняя цена: ${prices[0]}"
+        )
+    except Exception as e:
+        return f"Ошибка при поиске: {str(e)}"
 
 def handle_message(update: Update, context: CallbackContext):
-    query = update.message.text.strip()
-    ebay_result = search_ebay_prices(query)
-    update.message.reply_text(ebay_result)
-
-dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    query = normalize_query(update.message.text)
+    result = search_ebay_prices(query)
+    update.message.reply_text(result)
 
 @app.route('/')
 def index():
@@ -60,6 +54,8 @@ def webhook():
     update = Update.de_json(data, bot)
     dispatcher.process_update(update)
     return "ok"
+
+dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
