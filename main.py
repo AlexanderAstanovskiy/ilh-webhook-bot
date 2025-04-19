@@ -1,47 +1,35 @@
-import os
-import logging
-import requests
-from bs4 import BeautifulSoup
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
-
-TOKEN = os.getenv("TOKEN")
-
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-
 async def search_ebay(query: str) -> str:
+    import httpx
+    from bs4 import BeautifulSoup
+
+    url = f"https://www.ebay.com/sch/i.html?_nkw={query}&_sop=12"
     headers = {
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-    url = f"https://www.ebay.com/sch/i.html?_nkw={query}"
+
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+
         soup = BeautifulSoup(response.text, "html.parser")
-        prices = [
-            item.get_text(strip=True)
-            for item in soup.select("span.s-item__price")
-            if "$" in item.get_text()
-        ]
+        items = soup.select(".s-item")
+
+        prices = []
+        for item in items:
+            price_tag = item.select_one(".s-item__price")
+            link_tag = item.select_one("a.s-item__link")
+            if price_tag and link_tag:
+                price = price_tag.get_text(strip=True)
+                link = link_tag.get("href")
+                prices.append(f"{price} → {link}")
+            if len(prices) >= 3:
+                break
+
         if not prices:
             return "Цены на eBay не найдены."
-        return f"Минимальная цена на eBay: {min(prices)}"
+
+        return "Найдено на eBay:\n" + "\n".join(prices)
+
     except Exception as e:
-        return f"Ошибка при поиске на eBay: {str(e)}"
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.message.text.strip()
-    result = await search_ebay(query)
-    await update.message.reply_text(result)
-
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-if __name__ == "__main__":
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.getenv("PORT")),
-        webhook_url="https://ilh-webhook-bot.onrender.com"
-    )
+        return f"Ошибка при поиске на eBay: {e}"
