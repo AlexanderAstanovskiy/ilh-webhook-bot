@@ -1,46 +1,79 @@
 import os
-import logging
 import requests
 from flask import Flask, request
-from telegram import Update, Bot
-from telegram.ext import Application, MessageHandler, ContextTypes, filters
+import telegram
+from urllib.parse import quote_plus
 
-# Вставляем токен
-BOT_TOKEN = "7671684242:AAH4CjpaNdzz5dFu0iN7qYKgdDN3uaiaKgc"
+TOKEN = "7671684242:AAH4CjpaNdzz5dFu0iN7qYKgdDN3uaiaKgc"
+bot = telegram.Bot(token=TOKEN)
 
-# Настройка логов
-logging.basicConfig(level=logging.INFO)
-
-# Создание Flask
 app = Flask(__name__)
 
-# Функция обработки сообщений
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@app.route('/')
+def home():
+    return "Telegram bot is running"
+
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    update = telegram.Update.de_json(request.get_json(force=True), bot)
+    chat_id = update.message.chat.id
     query = update.message.text.strip()
-    url = f"https://www.ebay.com/sch/i.html?_nkw={query.replace(' ', '+')}"
-    await update.message.reply_text(f"Поиск на eBay:\n{url}")
 
-# Настройка Telegram Application
-telegram_app = Application.builder().token(BOT_TOKEN).build()
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    response = deep_search_prices(query)
+    bot.send_message(chat_id=chat_id, text=response, parse_mode=telegram.ParseMode.HTML)
+    return 'ok'
 
-# Flask endpoint для webhook
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-async def telegram_webhook():
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    await telegram_app.process_update(update)
-    return "OK"
+def deep_search_prices(query):
+    query_encoded = quote_plus(query)
 
-# Главная страница
-@app.route("/")
-def index():
-    return "Бот работает!"
+    urls = [
+        f"https://www.ebay.com/sch/i.html?_nkw={query_encoded}",
+        f"https://www.google.com/search?q=site%3A{detect_brand_site(query)}+{query_encoded}",
+        f"https://www.aliexpress.com/wholesale?SearchText={query_encoded}",
+        f"https://s.taobao.com/search?q={query_encoded}",
+        f"https://www.google.com/search?q={query_encoded}+site%3A.cn",
+        f"https://www.google.com/search?q={query_encoded}+site%3A.de",
+        f"https://www.google.com/search?q={query_encoded}+site%3A.com"
+    ]
 
-# Запуск
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    telegram_app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        webhook_url=f"https://ilh-webhook-bot.onrender.com/{BOT_TOKEN}"
-    )
+    sources = [
+        "eBay",
+        "Manufacturer",
+        "AliExpress",
+        "Taobao",
+        "China",
+        "Europe",
+        "USA"
+    ]
+
+    results = []
+    for url, name in zip(urls, sources):
+        results.append(f"<b>{name}</b>: <a href=\"{url}\">{url}</a>")
+
+    return "\n\n".join(results)
+
+def detect_brand_site(query):
+    query_lower = query.lower()
+    brands = {
+        "festo": "festo.com",
+        "bosch rexroth": "boschrexroth.com",
+        "siemens": "new.siemens.com",
+        "balluff": "balluff.com",
+        "hydac": "hydac.com",
+        "honeywell": "honeywell.com",
+        "parker": "parker.com",
+        "bonfiglioli": "bonfiglioli.com",
+        "sew-eurodrive": "sew-eurodrive.com",
+        "abb": "abb.com",
+        "aventics": "aventics.com",
+        "bronkhorst": "bronkhorst.com",
+        "sick": "sick.com",
+        "smc": "smc.eu"
+    }
+    for key in brands:
+        if key in query_lower:
+            return brands[key]
+    return "google.com"
+
+if __name__ == '__main__':
+    app.run(debug=True)
