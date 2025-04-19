@@ -1,38 +1,49 @@
 import os
+import logging
 import requests
-from flask import Flask, request
+from bs4 import BeautifulSoup
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
-app = Flask(__name__)
+TOKEN = os.getenv("TOKEN")
 
-BOT_TOKEN = "7671684242:AAH4CjpaNdzz5dFu0iN7qYKgdDN3uaiaKgc"
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 
-@app.route('/')
-def home():
-    return 'Bot is running'
-
-@app.route(f'/{BOT_TOKEN}', methods=['POST'])
-def receive_update():
-    data = request.get_json()
-
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
-
-        # Пример: отправка тестового ответа
-        reply = f"Получен артикул: {text}"
-        send_message(chat_id, reply)
-
-    return '', 200
-
-def send_message(chat_id, text):
-    url = f"{TELEGRAM_API_URL}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
+# eBay-поиск — выдаёт минимальную цену по запросу
+async def search_ebay(query: str) -> str:
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    url = f"https://www.ebay.com/sch/i.html?_nkw={query}&_sop=15"
     try:
-        requests.post(url, json=payload)
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, "html.parser")
+        items = soup.select(".s-item")
+        prices = [item.select_one(".s-item__price") for item in items if item.select_one(".s-item__price")]
+        if not prices:
+            return "Цены на eBay не найдены."
+        return f"Минимальная цена на eBay: {prices[0].text}"
     except Exception as e:
-        print("Ошибка отправки:", e)
+        return f"Ошибка при поиске на eBay: {e}"
+
+# Обработка входящего сообщения
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.message.text.strip()
+    logging.info(f"Получен запрос: {query}")
+    result = await search_ebay(query)
+    logging.info(f"Ответ пользователю: {result}")
+    await update.message.reply_text(result)
+
+# Запуск приложения
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.getenv("PORT")),
+        webhook_url="https://ilh-webhook-bot-1.onrender.com"
+    )
