@@ -1,6 +1,6 @@
 python-telegram-bot[webhooks]==20.3
 httpx==0.23.0
-bs4
+beautifulsoup4
 requests
 selenium
 webdriver-manager
