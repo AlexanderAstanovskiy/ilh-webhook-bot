@@ -1,64 +1,37 @@
+import os
+import logging
 import requests
-import re
-from flask import Flask, request
-from telegram import Bot, Update
-from telegram.ext import Dispatcher, MessageHandler, Filters
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-TOKEN = "7671684242:AAH4CjpaNdzz5dFu0iN7qYKgdDN3uaiaKgc"
-URL = f"https://api.telegram.org/bot{TOKEN}"
+BOT_TOKEN = os.getenv("TOKEN")
+PORT = int(os.environ.get('PORT', 10000))
 
-app = Flask(__name__)
-bot = Bot(token=TOKEN)
-dispatcher = Dispatcher(bot, None, workers=0, use_context=True)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-def normalize_query(query):
-    return ''.join(c for c in query if c.isalnum() or c in '-/.')
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введите артикул для поиска на eBay:")
 
-def search_ebay_prices(query):
-    try:
-        search_query = normalize_query(query)
-        url = f"https://www.ebay.com/sch/i.html?_nkw={search_query}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers)
-        items = response.text.split("$")[1:]
-        prices = []
+async def search_ebay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.message.text.strip()
+    await update.message.reply_text(f"Вы ввели: {query}")
 
-        for item in items[:10]:
-            match = re.match(r"([0-9]+\.[0-9]+)", item)
-            if match:
-                prices.append(float(match.group(1)))
+    ebay_url = f"https://www.ebay.com/sch/i.html?_nkw={requests.utils.quote(query)}"
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    response = requests.get(ebay_url, headers=headers)
 
-        if not prices:
-            return "Цены на eBay не найдены."
+    if "results" in response.text.lower():
+        await update.message.reply_text("Цены на eBay не найдены.")
+    else:
+        await update.message.reply_text(f"Возможно, найдены предложения:\n{ebay_url}")
 
-        min_price = min(prices)
-        avg_price = round(sum(prices) / len(prices), 2)
-        last_price = prices[-1]
-
-        return (
-            f"По eBay:\n"
-            f"- Мин. цена: ${min_price}\n"
-            f"- Средняя цена: ${avg_price}\n"
-            f"- Последняя цена: ${last_price}"
-        )
-
-    except Exception as e:
-        return f"Ошибка при поиске: {e}"
-
-def handle_message(update: Update, context):
-    query = update.message.text
-    result = search_ebay_prices(query)
-    update.message.reply_text(result)
-
-dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-
-@app.route("/", methods=["GET"])
-def index():
-    return "Bot is running!", 200
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, bot)
-    dispatcher.process_update(update)
-    return "ok"
+if __name__ == '__main__':
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_ebay))
+    app.run_polling(port=PORT, allowed_updates=Update.ALL_TYPES)
