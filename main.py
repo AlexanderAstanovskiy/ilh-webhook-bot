@@ -1,42 +1,38 @@
 import os
-import logging
 import requests
-from bs4 import BeautifulSoup
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from flask import Flask, request
 
-TOKEN = os.getenv("TOKEN")
+app = Flask(__name__)
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+BOT_TOKEN = "7671684242:AAH4CjpaNdzz5dFu0iN7qYKgdDN3uaiaKgc"
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-async def search_ebay(query: str) -> str:
-    headers = {"User-Agent": "Mozilla/5.0"}
-    url = f"https://www.ebay.com/sch/i.html?_nkw={query}"
+@app.route('/')
+def home():
+    return 'Bot is running'
+
+@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+def receive_update():
+    data = request.get_json()
+
+    if "message" in data:
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
+
+        # Пример: отправка тестового ответа
+        reply = f"Получен артикул: {text}"
+        send_message(chat_id, reply)
+
+    return '', 200
+
+def send_message(chat_id, text):
+    url = f"{TELEGRAM_API_URL}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, "html.parser")
-        items = soup.select(".s-item")
-        prices = [item.select_one(".s-item__price") for item in items if item.select_one(".s-item__price")]
-        if not prices:
-            return "Цены на eBay не найдены."
-        return f"Минимальная цена на eBay: {prices[0].text.strip()}"
+        requests.post(url, json=payload)
     except Exception as e:
-        return f"Ошибка при поиске на eBay: {str(e)}"
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.message.text.strip()
-    result = await search_ebay(query)
-    await update.message.reply_text(result)
-
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+        print("Ошибка отправки:", e)
 
 if __name__ == "__main__":
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.getenv("PORT")),
-        webhook_url="https://ilh-webhook-bot-1.onrender.com"
-    )
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
