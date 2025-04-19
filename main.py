@@ -3,7 +3,7 @@ import logging
 import requests
 from bs4 import BeautifulSoup
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
 TOKEN = os.getenv("TOKEN")
 
@@ -18,15 +18,18 @@ async def search_ebay(query: str) -> str:
     }
     url = f"https://www.ebay.com/sch/i.html?_nkw={query}"
     try:
-        response = requests.get(url, headers=headers, timeout=20)
+        response = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(response.text, "html.parser")
-        items = soup.select(".s-item")
-        prices = [item.select_one(".s-item__price") for item in items if item.select_one(".s-item__price")]
+        prices = [
+            item.get_text(strip=True)
+            for item in soup.select("span.s-item__price")
+            if "$" in item.get_text()
+        ]
         if not prices:
             return "Цены на eBay не найдены."
-        return f"Минимальная цена на eBay: {prices[0].text}"
+        return f"Минимальная цена на eBay: {min(prices)}"
     except Exception as e:
-        return f"Ошибка при поиске на eBay: {e}"
+        return f"Ошибка при поиске на eBay: {str(e)}"
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
