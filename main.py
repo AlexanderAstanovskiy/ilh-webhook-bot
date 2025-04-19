@@ -1,24 +1,32 @@
-import os
-import requests
-from flask import Flask, request
-
-app = Flask(__name__)
-TOKEN = "7671684242:AAH4CjpaNdzz5dFu0iN7qYKgdDN3uaiaKgc"
-TELEGRAM_URL = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-
 def search_ebay(query):
-    url = f"https://www.ebay.com/sch/i.html?_nkw={query}"
-    return f"Поиск на eBay: {url}"
+    import requests
+    from bs4 import BeautifulSoup
 
-@app.route("/", methods=["POST"])
-def webhook():
-    data = request.get_json()
-    if "message" in data and "text" in data["message"]:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"]["text"]
-        search_result = search_ebay(text.strip())
-        requests.post(TELEGRAM_URL, data={"chat_id": chat_id, "text": search_result})
-    return "OK"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+    search_url = f"https://www.ebay.com/sch/i.html?_nkw={query}"
+    try:
+        response = requests.get(search_url, headers=headers, timeout=20)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+        items = soup.select("li.s-item")
+        results = []
+        for item in items[:10]:
+            title_elem = item.select_one("h3.s-item__title")
+            price_elem = item.select_one(".s-item__price")
+            link_elem = item.select_one("a.s-item__link")
+
+            if title_elem and price_elem and link_elem:
+                title = title_elem.text.strip()
+                price = price_elem.text.strip()
+                link = link_elem['href']
+                results.append(f"{title} — {price}\n{link}")
+
+        if results:
+            return "\n\n".join(results)
+        else:
+            return "Цены на eBay не найдены."
+    except Exception as e:
+        return f"Ошибка при поиске на eBay: {e}"
