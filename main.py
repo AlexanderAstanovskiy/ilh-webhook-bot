@@ -1,51 +1,45 @@
-from flask import Flask, request
-from telegram import Update
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+import logging
+import os
 import requests
-from bs4 import BeautifulSoup
+from flask import Flask, request
+from telegram import Bot, Update
+from telegram.ext import Dispatcher, MessageHandler, filters, CallbackContext
 
-TOKEN = "ТВОЙ_ТОКЕН_ЗДЕСЬ"
-BOT_URL = "https://ilh-webhook-bot.onrender.com"
+# Твой токен Telegram
+BOT_TOKEN = "7671684242:AAH4CjpaNdzz5dFu0iN7qYKgdDN3uaiaKgc"
 
+# Настройка логирования
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# Создание Flask-приложения
 app = Flask(__name__)
+bot = Bot(token=BOT_TOKEN)
 
-def search_ebay(query):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-    search_url = f"https://www.ebay.com/sch/i.html?_nkw={query}"
-    try:
-        response = requests.get(search_url, headers=headers, timeout=15)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        items = soup.select("li.s-item")
-        results = []
-        for item in items[:3]:
-            title = item.select_one("h3")
-            price = item.select_one(".s-item__price")
-            link = item.select_one("a")
-            if title and price and link:
-                results.append(f"{title.text} — {price.text}\n{link['href']}")
-        if results:
-            return "\n\n".join(results)
-        else:
-            return "Цены на eBay не найдены."
-    except Exception as e:
-        return f"Ошибка при поиске на eBay: {e}"
+# Инициализация диспетчера
+dispatcher = Dispatcher(bot=bot, update_queue=None, use_context=True)
 
-@app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook(request=request):
-    data = request.get_json(force=True)
-    update = Update.de_json(data, Application.builder().token(TOKEN).build().bot)
-    await application.process_update(update)
+# Обработчик сообщений
+def handle_message(update: Update, context: CallbackContext):
+    query = update.message.text.strip()
+    ebay_url = f"https://www.ebay.com/sch/i.html?_nkw={query.replace(' ', '+')}"
+    update.message.reply_text(f"Вот ссылка на поиск eBay:\n{ebay_url}")
+
+# Привязка обработчика
+dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+# Webhook для Telegram
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
     return "OK"
 
-@app.route("/", methods=["GET"])
+# Корневая страница
+@app.route("/")
 def index():
-    return "Бот работает!"
+    return "Бот запущен и работает."
 
-application = Application.builder().token(TOKEN).build()
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, ctx: update.message.reply_text(search_ebay(update.message.text))))
-
+# Запуск приложения
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
